@@ -7,7 +7,9 @@ import {
 import { Abstract } from '@nestjs/common/interfaces';
 import { Type } from '@nestjs/common/interfaces/type.interface';
 import { isEmpty } from '@nestjs/common/utils/shared.utils';
+import { iterate } from 'iterare';
 import { MESSAGES } from './constants';
+import { InvalidClassScopeException } from './errors/exceptions/invalid-class-scope.exception';
 import { UnknownElementException } from './errors/exceptions/unknown-element.exception';
 import { UnknownModuleException } from './errors/exceptions/unknown-module.exception';
 import { createContextId } from './helpers';
@@ -24,7 +26,6 @@ import { ContainerScanner } from './injector/container-scanner';
 import { Injector } from './injector/injector';
 import { InstanceWrapper } from './injector/instance-wrapper';
 import { Module } from './injector/module';
-import { iterate } from 'iterare';
 
 /**
  * @publicApi
@@ -139,12 +140,7 @@ export class NestApplicationContext implements INestApplicationContext {
     }
 
     signals = iterate(signals)
-      .map((signal: string) =>
-        signal
-          .toString()
-          .toUpperCase()
-          .trim(),
-      )
+      .map((signal: string) => signal.toString().toUpperCase().trim())
       // filter out the signals which is already listening to
       .filter(signal => !this.activeShutdownSignals.includes(signal))
       .toArray();
@@ -281,7 +277,9 @@ export class NestApplicationContext implements INestApplicationContext {
     options?: { strict: boolean },
   ): Promise<TResult> {
     let wrapper: InstanceWrapper, collection: Map<string, InstanceWrapper>;
-    if (!(options && options.strict)) {
+
+    const isStrictModeEnabled = options && options.strict;
+    if (!isStrictModeEnabled) {
       [wrapper, collection] = this.containerScanner.getWrapperCollectionPair(
         typeOrToken,
       );
@@ -294,8 +292,13 @@ export class NestApplicationContext implements INestApplicationContext {
         contextModule,
       );
     }
+    if (wrapper.isDependencyTreeStatic() && !wrapper.isTransient) {
+      throw new InvalidClassScopeException(typeOrToken);
+    }
+
+    const ctorHost = wrapper.instance || { constructor: typeOrToken };
     const instance = await this.injector.loadPerContext(
-      wrapper.instance,
+      ctorHost,
       wrapper.host,
       collection,
       contextId,

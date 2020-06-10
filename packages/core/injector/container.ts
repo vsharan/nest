@@ -4,7 +4,7 @@ import { Injectable } from '@nestjs/common/interfaces/injectable.interface';
 import { Type } from '@nestjs/common/interfaces/type.interface';
 import { ApplicationConfig } from '../application-config';
 import { CircularDependencyException } from '../errors/exceptions/circular-dependency.exception';
-import { InvalidModuleException } from '../errors/exceptions/invalid-module.exception';
+import { UndefinedForwardRefException } from '../errors/exceptions/undefined-forwardref.exception';
 import { UnknownModuleException } from '../errors/exceptions/unknown-module.exception';
 import { ExternalContextCreator } from '../helpers/external-context-creator';
 import { HttpAdapterHost } from '../helpers/http-adapter-host';
@@ -55,8 +55,10 @@ export class NestContainer {
     metatype: Type<any> | DynamicModule | Promise<DynamicModule>,
     scope: Type<any>[],
   ): Promise<Module> {
+    // In DependenciesScanner#scanForModules we already check for undefined or invalid modules
+    // We sill need to catch the edge-case of `forwardRef(() => undefined)`
     if (!metatype) {
-      throw new InvalidModuleException(scope);
+      throw new UndefinedForwardRefException(scope);
     }
     const { type, dynamicMetadata, token } = await this.moduleCompiler.compile(
       metatype,
@@ -64,7 +66,7 @@ export class NestContainer {
     if (this.modules.has(token)) {
       return;
     }
-    const moduleRef = new Module(type, scope, this);
+    const moduleRef = new Module(type, this);
     this.modules.set(token, moduleRef);
     this.addDynamicMetadata(token, dynamicMetadata, [].concat(scope, type));
 
@@ -180,11 +182,11 @@ export class NestContainer {
   }
 
   public replace(toReplace: any, options: any & { scope: any[] | null }) {
-    this.modules.forEach(module => module.replace(toReplace, options));
+    this.modules.forEach(moduleRef => moduleRef.replace(toReplace, options));
   }
 
   public bindGlobalScope() {
-    this.modules.forEach(module => this.bindGlobalsToImports(module));
+    this.modules.forEach(moduleRef => this.bindGlobalsToImports(moduleRef));
   }
 
   public bindGlobalsToImports(moduleRef: Module) {
